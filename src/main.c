@@ -1,12 +1,13 @@
 #include <avr/io.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <util/delay.h>
 #include "zst-avr-usi-max7219.h"
 #include "zst-avr-usi-adxl345.h"
 #include "font-vert-5x8.h"
-
+#include "staticSprites.h"
 
 /*
 VCC
@@ -49,9 +50,160 @@ uint8_t reverse(uint8_t b) {
     return b;
 }
 
+// http://www.avrfreaks.net/forum/tiny-fast-prng
+uint8_t rnd(void) {
+    static uint8_t s=0xaa,a=0;
+    s^=s<<3;
+    s^=s>>5;
+    s^=a++>>2;
+    return s;
+}
+
 #define debouncingButton(confidence, condition) \
 for ((confidence) = 12; (confidence) > 0 && (condition); (confidence)--) { \
     _delay_ms(10);\
+}
+
+
+// Inspired by: https://github.com/brnunes/Arduino-Doodle-Jump
+// and: https://www.youtube.com/watch?v=oJbJWe_KpdU
+
+#define DOODLER_JUMP_MAX_THRESH (4) // max threshold to jump, before shifting screen down
+#define DOODLER_JUMP_HEIGHT (5) // max height to jump
+#define DOODLER_FALL_MAX_THRESH (-4) // fall below amount of dots and you lose
+#define DOODLER_JUMP_CYCLES (15.0)
+#define DOODLER_REFRESH_DELAY (50)
+#define DOODLER_DEFAULT_BITS (0b11U)
+#define DOODLER_TILT_ANGLE (M_PI/6)
+
+struct Doodler {
+    volatile int8_t col;
+    int8_t orig_pos;
+    uint8_t bits; // beginning shift 2  start at the center 0b0001 1100
+    int8_t jump_shift;
+    uint8_t frame;
+    bool blink;
+};
+
+void loopDoodleJump() {
+    for(;;) {
+        showSprite_321Go();
+        uint8_t matrix_col[8] = {
+                0b00001000,
+                0b00001000,
+                0b00001001,
+                0b00000001,
+                0b01000001,
+                0b01000000,
+                0b01000000,
+                0000000000
+        };
+
+        /** Setup game variables*/
+        struct Doodler doodler = {
+                .orig_pos = 0,
+                .frame = 0,
+                .blink = false,
+        };
+
+        int16_t x, y, z;
+        double rad_angle_tilt = 0;
+        int8_t score = -2; // -2 to fix first line and last line (upon losing)
+        while (true) {
+            /** Process sensor data */
+            ADXL345_readAccel(&x, &y, &z);
+            rad_angle_tilt = atan(y * 1.0 / z);
+
+            /** Update doodler location */
+            // rad_angle_tilt:              -pi/4 -> col 0 | +pi/4 -> col 7
+            // rad_angle_tilt/M_PI_4:       -1 -> col 0 | +1 -> col 7
+            // rad_angle_tilt/M_PI_4 + 1:    0 -> col 0 | +2 -> col 7
+            // 3.5*(rad_angle_tilt/M_PI_4 + 1):   0 -> col 0 | +7 -> col 7
+            doodler.col = ((rad_angle_tilt / DOODLER_TILT_ANGLE + 1) * 3.5);
+            if (doodler.col < 0) {
+                doodler.col = 0;
+            } else if (doodler.col > 7) {
+                doodler.col = 7;
+            }
+
+            doodler.jump_shift = DOODLER_JUMP_HEIGHT * sinf(doodler.frame / DOODLER_JUMP_CYCLES * M_PI);
+            doodler.frame++;
+
+            uint8_t doodlerResultantShift = (doodler.orig_pos + doodler.jump_shift);
+            if (doodler.jump_shift > DOODLER_FALL_MAX_THRESH) {
+                doodler.bits = DOODLER_DEFAULT_BITS << doodlerResultantShift;
+            } else {
+                // Lose as fall too low
+                break;
+            }
+
+            /** Check if doodler bouncing on platform */
+            // If doodler is falling and it touches a platform, change direction up
+            if (doodler.frame > (0.5*DOODLER_JUMP_CYCLES) &&
+                ((matrix_col[doodler.col] >> doodlerResultantShift) & 0x01) != 0) {
+                doodler.frame = 0;
+                doodler.orig_pos = doodlerResultantShift;
+            }
+
+            /** If doodler too high, shift screen down */
+            if (doodlerResultantShift > DOODLER_JUMP_MAX_THRESH) {
+                // Shift screen down
+                // also, save last row for later
+                uint8_t platformBitsLeavingRow = 0;
+                for (uint8_t col = 0; col < 8; col++) {
+                    platformBitsLeavingRow |= (0x01 & matrix_col[col]);
+                    platformBitsLeavingRow <<= 1;
+                    matrix_col[col] >>= 1;
+                }
+                // Shift doodler down
+                doodler.orig_pos--;
+                doodler.bits >>= 1;
+
+                // Generate new platform, if we shifted out a platform
+                if (platformBitsLeavingRow != 0) {
+                    PORTA ^= _BV(PA0);
+                    uint8_t newPlatformShift = (rnd() % 6);
+                    for (uint8_t col = 0; col < 3; col++) {
+                        matrix_col[newPlatformShift + col] |= 0x80;
+                    }
+                    score++;
+                }
+                // Also add points on leaving platform
+                // Because we may bounce on the same platform twice
+                // So a better score system will be to check how many platforms are cleared
+            }
+
+            /** Doodler is constantly flashing every cycle */
+            doodler.blink = !doodler.blink; // ball blinks every cycle
+
+            /** Update Screen */
+            for (uint8_t col = 0; col < 8; col++) {
+                if (col == doodler.col && doodler.blink) {
+                    MAX7219_Shift2Bytes(col + 1, matrix_col[col] | doodler.bits);
+                } else {
+                    MAX7219_Shift2Bytes(col + 1, matrix_col[col]);
+                }
+            }
+
+            _delay_ms(DOODLER_REFRESH_DELAY);
+
+            if ((PINA & _BV(PA1)) == 0) {
+                int8_t confidence;
+                debouncingButton(confidence, (PINA & _BV(PA1)) == 0);
+                if (confidence <= 0) {
+                    return;
+                }
+            }
+        }
+        char buffer[5], output[6] = " ";
+        itoa(score,buffer,10);
+        for (uint8_t i = 1; i <= 5; i++) {
+            output[i] = buffer[i-1];
+        }
+        showText(output);
+        showSprite_sadFace();
+        _delay_ms(2000);
+    }
 }
 
 #define BREAKOUT_PADDLE_BITS (0b111)
@@ -92,7 +244,7 @@ void loopAtariBreakout() {
         enum BallDirection ball_dir = UP_STRAIGHT;
         int16_t x, y, z, paddle_shift;
 
-        showText(" READY?");
+        showSprite_321Go();
 
         bool didWin;
         while(true) {
@@ -291,24 +443,10 @@ void loopAtariBreakout() {
         // showText(didWin ? " WIN!" : " LOSE");
         if (didWin) {
             // SMILEY FACE
-            MAX7219_Shift2Bytes(1, 0x00);
-            MAX7219_Shift2Bytes(2, 0x64);
-            MAX7219_Shift2Bytes(3, 0x62);
-            MAX7219_Shift2Bytes(4, 0x02);
-            MAX7219_Shift2Bytes(5, 0x02);
-            MAX7219_Shift2Bytes(6, 0x62);
-            MAX7219_Shift2Bytes(7, 0x64);
-            MAX7219_Shift2Bytes(8, 0x00);
+            showSprite_smileyFace();
         } else {
             // SAD FACE
-            MAX7219_Shift2Bytes(1, 0x00);
-            MAX7219_Shift2Bytes(2, 0x22);
-            MAX7219_Shift2Bytes(3, 0x64);
-            MAX7219_Shift2Bytes(4, 0x04);
-            MAX7219_Shift2Bytes(5, 0x04);
-            MAX7219_Shift2Bytes(6, 0x64);
-            MAX7219_Shift2Bytes(7, 0x22);
-            MAX7219_Shift2Bytes(8, 0x00);
+            showSprite_sadFace();
         }
         _delay_ms(1500);
     }
@@ -395,6 +533,11 @@ int main(void) {
                 loopParallelLine(x, y, z);
                 break;
             case 5:
+                loopDoodleJump();
+                currentMode = 6;
+                continue;
+                break;
+            case 6:
                 loopAtariBreakout();
                 currentMode = 0;
                 break;
