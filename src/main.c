@@ -278,9 +278,9 @@ void loopAtariBreakout() {
 
             _delay_ms(BREAKOUT_REFRESH_DELAY);
 
-            if ((PINA & _BV(PA3)) == 0) {
+            if ((PINA & _BV(PA1)) == 0) {
                 int8_t confidence;
-                debouncingButton(confidence, (PINA & _BV(PA3)) == 0);
+                debouncingButton(confidence, (PINA & _BV(PA1)) == 0);
                 if (confidence <= 0) {
                     return;
                 }
@@ -340,9 +340,9 @@ int main(void) {
     DDRA |= _BV(PA0); // output
     PORTA |= _BV(PA0); // output high
 
-    // Pin 10 push button
-    DDRA &= ~(_BV(PA3)); // input
-    PORTA |= _BV(PA3); // internal pull up
+    // Pin 12 push button
+    DDRA &= ~(_BV(PA1)); // input
+    PORTA |= _BV(PA1); // internal pull up
 
     // Setup MAX7219 LED Matrix
     MAX7219_USI_SPI_Init();
@@ -403,10 +403,10 @@ int main(void) {
 
         _delay_ms(75);
 
-        if ((PINA & _BV(PA3)) == 0) {
+        if ((PINA & _BV(PA1)) == 0) {
             int8_t confidence;
-            debouncingButton(confidence, (PINA & _BV(PA3)) == 0);
-            /*for (confidence = 12; confidence > 0 && ((PINA & _BV(PA3)) == 0); confidence--) {
+            debouncingButton(confidence, (PINA & _BV(PA1)) == 0);
+            /*for (confidence = 12; confidence > 0 && ((PINA & _BV(PA1)) == 0); confidence--) {
                 _delay_ms(10);
             }*/
             if (confidence <= 0) {
