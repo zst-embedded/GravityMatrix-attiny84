@@ -27,8 +27,6 @@ PA5 (ADC5/DO/MISO/OC1B/PCINT5)
  */
 //https://github.com/sparkfun/SparkFun_ADXL345_Arduino_Library/blob/master/src/SparkFun_ADXL345.cpp
 
-
-
 #define START_BRIGHTNESS (0xF)
 
 #define LED_WIDTH (8)
@@ -37,10 +35,12 @@ PA5 (ADC5/DO/MISO/OC1B/PCINT5)
 #define LED_HEIGHT_MAX (8)
 #define LED_HEIGHT_HALF (4)
 
+void showText(const char input[]);
+uint8_t reverse(uint8_t b);
+
 #include "waterMode.h"
 #include "plusMeterMode.h"
-
-void showText(const char input[]);
+#include "parallelLineMode.h"
 
 uint8_t reverse(uint8_t b) {
     b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
@@ -59,7 +59,6 @@ for ((confidence) = 12; (confidence) > 0 && (condition); (confidence)--) { \
 #define BREAKOUT_BALL_WAIT_CYCLE (4) // Lower = faster speed.
 #define BREAKOUT_REFRESH_DELAY (50) // Lower = faster speed.
 #define BREAKOUT_TILT_ANGLE (M_PI/6)
-
 
 // Inspired by https://www.youtube.com/watch?v=mFzewcuDCFY
 // col 1 = paddle
@@ -94,14 +93,6 @@ void loopAtariBreakout() {
         int16_t x, y, z, paddle_shift;
 
         showText(" 321");
-        /*
-        for (y = 3; y > 0; y--) {
-            for (x = 0; x < 8; x++) {
-                uint8_t a = getFont('0'+ y, x);
-                MAX7219_Shift2Bytes(8-x, reverse(a));
-            }
-            _delay_ms(750);
-        }*/
 
         bool didWin;
         while(true) {
@@ -115,13 +106,11 @@ void loopAtariBreakout() {
             /** Process sensor data */
             ADXL345_readAccel(&x, &y, &z);
             double rad_angle_tilt = atan( x * 1.0 / z );
-            //int8_t paddleShift = fabs(rad_angle_tilt / M_PI_4 * LED_WIDTH_HALF);
             // rad_angle_tilt:                         -pi/4 -> shift -1 | +pi/4 -> shift 6
             // rad_angle_tilt/M_PI_4:                  -1 -> shift -1 | +1 -> shift 6
             // ((rad_angle_tilt/M_PI_4)+1):             0 -> shift -1 | 2 -> shift 6
             // ((rad_angle_tilt/M_PI_4)+1)*2.5:         0 -> shift -1 | 5 -> shift 6
             // ((rad_angle_tilt/M_PI_4)+1)*2.5 -1:     -1 -> shift -1 | 6 -> shift 6
-            //
             paddle_shift = round ( ((rad_angle_tilt/BREAKOUT_TILT_ANGLE)+1) * 2.5 - 1 );
             if (paddle_shift <= -1) {
                 //paddle_shift = -1;
@@ -175,48 +164,6 @@ void loopAtariBreakout() {
                                 }
                             }
                         }
-                        /*
-
-                        if (DOWN_STRAIGHT == ball_dir) {
-                            if (paddleDirectlyBelowBall) {
-                                if (isCenter) {
-                                    ball_dir = UP_STRAIGHT;
-                                } else {
-                                    if ((ball_bits >> 1 & matrix_col[0]) == 0) {
-                                        // bit to the left is empty -> hence bounce towards right most of paddle
-                                        ball_dir = UP_RIGHT;
-                                    } else if ((ball_bits << 1 & matrix_col[0]) == 0) {
-                                        // bit to the right is empty -> hence bounce towards left most of paddle
-                                        ball_dir = UP_LEFT;
-                                    }
-                                }
-                            }
-                        } else {
-                            if (DOWN_LEFT == ball_dir) {
-                                if (paddleDirectlyBelowBall) {
-                                    // if center then direct up, if not then ball bounces sideways
-                                    ball_dir = isCenter ? UP_STRAIGHT : UP_RIGHT;
-                                } else {
-                                    // check edge
-                                    ball_bits <<= 1;
-                                    bool paddleEdgeHitBall = (ball_bits & matrix_col[0]) != 0;
-                                    if (paddleEdgeHitBall) {
-                                        ball_dir = UP_RIGHT;
-                                    }
-                                }
-                            } else if (DOWN_RIGHT == ball_dir) {
-                                if (paddleDirectlyBelowBall) {
-                                    ball_dir = isCenter ? UP_STRAIGHT : UP_LEFT;
-                                } else {
-                                    // check edge
-                                    ball_bits >>= 1;
-                                    bool paddleEdgeHitBall = (ball_bits & matrix_col[0]) != 0;
-                                    if (paddleEdgeHitBall) {
-                                        ball_dir = UP_LEFT;
-                                    }
-                                }
-                            }
-                        }*/
                     }
                 } else if (8 <= ball_colno) {
                     switch (ball_dir) {
@@ -251,7 +198,6 @@ void loopAtariBreakout() {
                             break;
                     }
                 }
-
 
                 // Move ball to next position
                 switch (ball_dir) {
@@ -368,58 +314,6 @@ void loopAtariBreakout() {
     }
 }
 
-void loopParallelLine(int8_t x, int8_t y, int8_t z) {
-    /*
-     * Gradient, m = (v1 - v2) / (h1 - h2)
-     * Coordinates of center is (4.5, 4.5)
-     *
-     * m = 4.5-v2 / 4.5 - col
-     * v2 = 4.5 - m*(4.5-col)
-     */
-
-    float gradient = -y*1.0 / x; // negative sign as the gradient is opposite in real life
-    uint8_t bitPosition;
-    if (x == 0 || fabs(gradient) > 6) { // infinite gradient or steeper than 4 gradient (8/2)
-        for (uint8_t col = 1; col <= LED_WIDTH; col++) {
-            MAX7219_Shift2Bytes(col, (col == 4 || col == 5) ? 0xFF : 0);
-        }
-    } else {
-        uint8_t bits = 0xFF;
-        for (uint8_t col = 1; col <= LED_WIDTH_HALF; col++) {
-            bitPosition = 4.5 - gradient * (4.5-col); // equation from above
-            if (col == 4) {
-                uint8_t mask = 0b00011000; // center 2 always lit
-                if (bits == 0) { // previous bits == 0
-                    bits = (gradient > 0) ? 0x0F : 0xF0;
-                } else {
-                    /* Bug workaround: fix gaps */
-                    if (bits == 0x03) { // previous bits is 11 bottom most, then fix gap
-                        mask |= 0b0100;
-                    } else if (bits == 0x01) { // previous bits is 01 bottom most, then fix gap
-                        mask |= 0b0110;
-                    } else if (bits == 0xC0) { // previous bits is 11 top most, then fix gap
-                        mask |= 0b0010<<4;
-                    } else if (bits == 0x80) { // previous bits is 01 top most, then fix gap
-                        mask |= 0b0110<<4;
-                    }
-                    bits = ~((1<<(bitPosition)) - 1) & 0x0F;
-                }
-                bits |= mask;
-            } else {
-                if (0 <= bitPosition && bitPosition <= 8) {
-                    bits = 0b11 << (bitPosition-1); //ie. for position 4, 0000 1000, shift only 3 times
-                } else {
-                    // fix bug of not allowing shifts to be overflown
-                    bits = 0;
-                }
-            }
-            MAX7219_Shift2Bytes(col, bits);
-            MAX7219_Shift2Bytes(LED_WIDTH + 1 - col, reverse(bits)); // Reverse bytes as diagonally symmetrical
-        }
-    }
-}
-
-
 #define MOVEMENT_SPEED 50  // Delay between frames in msec
 void showText(const char input[]) {
     uint8_t x, movement, origOffset;
@@ -524,6 +418,5 @@ int main(void) {
             }
             _delay_ms(100);
         }
-
     }
 }
