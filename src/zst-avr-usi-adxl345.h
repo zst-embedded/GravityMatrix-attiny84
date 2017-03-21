@@ -1,3 +1,6 @@
+#pragma once
+
+
 #define _ADXL345_DDR_SPI    DDRA
 #define _ADXL345_PORT_SPI   PORTA
 #define _ADXL345_PIN_SPI    PINA
@@ -83,8 +86,8 @@ void ADXL345_USI_SPI_Init(void) {
     ADXL345_InactivityINT(0);
     ADXL345_ActivityINT(0);
     ADXL345_FreeFallINT(0);
-    ADXL345_doubleTapINT(0);
-    ADXL345_singleTapINT(1);
+    ADXL345_doubleTapINT(1);
+    ADXL345_singleTapINT(0);
 
-    ADXL345_setInterruptMapping(ADXL345_INT_SINGLE_TAP_BIT, ADXL345_INT1_PIN);
+    ADXL345_setInterruptMapping(ADXL345_INT_DOUBLE_TAP_BIT, ADXL345_INT1_PIN);
 }

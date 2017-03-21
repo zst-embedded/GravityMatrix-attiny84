@@ -1,3 +1,6 @@
+#pragma once
+
+
 #define _MAX7219_DDR_CS DDRB
 #define _MAX7219_PORT_CS PORTB
 #define _MAX7219_CS PB1

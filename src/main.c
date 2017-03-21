@@ -1,9 +1,13 @@
 #include <avr/io.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <util/delay.h>
 #include "zst-avr-usi-max7219.h"
 #include "zst-avr-usi-adxl345.h"
+#include "font-vert-5x8.h"
+
+
 /*
 VCC
 (PCINT8/XTAL1/CLKI) PB0
@@ -24,154 +28,179 @@ PA5 (ADC5/DO/MISO/OC1B/PCINT5)
 //https://github.com/sparkfun/SparkFun_ADXL345_Arduino_Library/blob/master/src/SparkFun_ADXL345.cpp
 
 
-#define PI_OVER_180 (0.01745329251) // = 1/180.0 * M_PI
-#define DEG180_OVER_PI (57.2957795) // =
-#define numb_between(a,b,c) ((a) < (b) && (b) < (c))
 
-void displayLine(int, int);
-void calculateAngle(double * angleAround, double * angleTilt, int16_t x, int16_t y, int16_t z);
+#define START_BRIGHTNESS (0xF)
+
+#define LED_WIDTH (8)
+#define LED_WIDTH_HALF (4)
+
+#define LED_HEIGHT_MAX (8)
+#define LED_HEIGHT_HALF (4)
+
+#include "waterMode.h"
+
+
+
+uint8_t reverse(uint8_t b) {
+    b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+    b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+    b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+    return b;
+}
+
+#define MOVEMENT_SPEED 65  // Delay between frames in msec
+void showText(const char input[]) {
+    uint8_t x, movement, origOffset;
+    for (uint8_t eachChar = 0; input[eachChar] != '\0'; eachChar++) { // FOR EACH CHAR
+        for (movement = 0; movement < LED_WIDTH; movement++) {
+            for (x = 1; x <= LED_WIDTH-movement; x++) {
+                uint8_t a = getFont(input[eachChar], x+movement);
+                MAX7219_Shift2Bytes(LED_WIDTH-x+1, reverse(a));
+            }
+            origOffset = x;
+            for (; x <= LED_WIDTH && x <= LED_WIDTH; x++) {
+                uint8_t b = getFont(input[eachChar+1], x-origOffset);
+                MAX7219_Shift2Bytes(LED_WIDTH-x+1, reverse(b));
+            }
+            _delay_ms(MOVEMENT_SPEED);
+        }
+    }
+}
+
+void loopPlusMeter(int8_t x, int8_t y, int8_t z) {
+    double rad_angle_tilt_vert = atan( x * 1.0 / z ); // x axis is pointing down
+    double rad_angle_tilt_hori = atan( y * 1.0 / z ); // y axis is pointing right
+
+    // center 2x2 is always lit
+    // if pos, LED_HEIGHT_TOP_HALF_UP to LED_HEIGHT_MAX mapped to 0 to 45 deg
+    // if neg, LED_HEIGHT_BOTTOM_HALF_DOWN to 0, mapped to 0 to -45deg
+
+
+    uint8_t vert_center_col = 0b00011000; // For 0000 1111 -> do 1<<5 - 1 = 0001 0000 - 1/
+    int8_t vert_expansion_numb = fabs(rad_angle_tilt_vert / M_PI_4 * LED_HEIGHT_HALF); // -> angle/45deg * 4LEDs
+    uint8_t vert_expansion_bits = _BV(vert_expansion_numb + 1) - 1;
+    if (0 == vert_expansion_numb) {
+        // do nothing
+    } else if (rad_angle_tilt_vert > 0) {
+        // positive so, expand center 2 columns upwards
+        vert_center_col |= (vert_expansion_bits << LED_HEIGHT_HALF );
+    } else { // if (rad_angle_tilt_vert < 0) {
+        // negative so, expand center 2 columns downwards
+        vert_center_col |= (vert_expansion_bits << (LED_HEIGHT_HALF - vert_expansion_numb) );
+    }
+
+
+    int8_t hori_expansion_numb = fabs(rad_angle_tilt_hori / M_PI_4 * LED_WIDTH_HALF);
+
+    MAX7219_Shift2Bytes(4, vert_center_col);
+    MAX7219_Shift2Bytes(5, vert_center_col);
+    if (0 == rad_angle_tilt_hori) {
+        // do nothing
+    } else if (rad_angle_tilt_hori < 0) {
+        for (uint8_t col = 1; col < LED_WIDTH_HALF; col++) {
+            MAX7219_Shift2Bytes(col, ( (LED_WIDTH_HALF - hori_expansion_numb) <= col ) ? 0b00011000 : 0);
+        }
+        //MAX7219_Shift2Bytes(4, vert_center_col);
+        //MAX7219_Shift2Bytes(5, vert_center_col);
+        for (uint8_t col = LED_WIDTH_HALF+2; col <= LED_WIDTH; col++) {
+            MAX7219_Shift2Bytes(col, 0);
+        }
+    } else { //if (rad_angle_tilt_hori > 0) {
+        for (uint8_t col = 1; col < LED_WIDTH_HALF; col++) {
+            MAX7219_Shift2Bytes(col, 0);
+        }
+        //MAX7219_Shift2Bytes(4, vert_center_col);
+        //MAX7219_Shift2Bytes(5, vert_center_col);
+        for (uint8_t col = LED_WIDTH_HALF+2; col <= LED_WIDTH; col++) {
+            MAX7219_Shift2Bytes(col, ( (LED_WIDTH_HALF + hori_expansion_numb) >= col ) ? 0b00011000 : 0);
+        }
+    }
+}
+
 
 int main(void) {
-    DDRB |= _BV(PB2);
-    DDRA |= _BV(PA7);
-    DDRA &= ~_BV(PA0);
-    PORTA |= _BV(PA0); // internal pull up
+    // Pin 13 LED
+    DDRA |= _BV(PA0); // output
+    PORTA |= _BV(PA0); // output high
+
+    // Pin 10 push button
+    DDRA &= ~(_BV(PA3)); // input
+    PORTA |= _BV(PA3); // internal pull up
 
     // Setup MAX7219 LED Matrix
     MAX7219_USI_SPI_Init();
-
-    _delay_ms(250);
-    MAX7219_Shift2Bytes(MAX7219_MODE_TEST, 1);
-    _delay_ms(250);
-    MAX7219_Shift2Bytes(MAX7219_MODE_TEST, 0);
     MAX7219_Shift2Bytes(MAX7219_MODE_SCAN_LIMIT, 7);
-    MAX7219_Shift2Bytes(MAX7219_MODE_INTENSITY, 0x0);
+    MAX7219_Shift2Bytes(MAX7219_MODE_INTENSITY, START_BRIGHTNESS);
     MAX7219_Shift2Bytes(MAX7219_MODE_POWER, 0x1);
     MAX7219_Shift2Bytes(MAX7219_MODE_DECODE, 0x0);
 
+    //_delay_ms(250);
+    //MAX7219_Shift2Bytes(MAX7219_MODE_TEST, 1);
+    //_delay_ms(250);
+    //MAX7219_Shift2Bytes(MAX7219_MODE_TEST, 0);
+
     // Setup ADXL345 3 axis accelerometer
     ADXL345_USI_SPI_Init();
-
-    double angle_around, angle_tilt;
     int16_t x, y, z;
-    uint8_t interruptSource, brightness = 0x0;
+    uint8_t currentMode = 0,
+            previousMode = 10,
+            brightness = START_BRIGHTNESS;
+    // previousMode=10 so scrolling text is shown on boot
+
     while (1) {
+        // If mode change, show splash screen
+        if (currentMode != previousMode) {
+            // show mode as a letter
+            char input[5];
+            sprintf(input, " #%d", (currentMode+1));
+            showText(input);
+            previousMode = currentMode;
+        }
         // Accelerometer Readings
         ADXL345_readAccel(&x, &y, &z);
-
-        // Calculate angles
-        calculateAngle(&angle_around, &angle_tilt, x, y, z);
-        if (angle_around == -100) { // don't update as we don't know 0 or 180 deg.
-            // do nothing
-        } else if (angle_around != -1) {
-            if (PINA & _BV(PA0)) { // if switched pulled to ground, then active
-                displayLine(angle_around, 4);
-            } else {
-                displayLine(angle_around, 4.5 + (angle_tilt / 90.0 * 3));
-            }
-        } else {
-            MAX7219_Shift2Bytes(1, 0b10000001);
-            MAX7219_Shift2Bytes(2, 0b01000010);
-            MAX7219_Shift2Bytes(3, 0b00100100);
-            MAX7219_Shift2Bytes(4, 0b00011000);
-            MAX7219_Shift2Bytes(5, 0b00011000);
-            MAX7219_Shift2Bytes(6, 0b00100100);
-            MAX7219_Shift2Bytes(7, 0b01000010);
-            MAX7219_Shift2Bytes(8, 0b10000001);
-        }
-
         // ADXL Interrupts
-        interruptSource = ADXL345_getInterruptSource();
-        if (ADXL345_triggered(interruptSource , ADXL345_SINGLE_TAP)) {
-            PORTB |= _BV(PB2);
+        if (ADXL345_triggered(ADXL345_getInterruptSource(), ADXL345_DOUBLE_TAP)) {
             if (brightness >= 0xF) {
                 brightness = 0;
             } else {
                 brightness += 0x5;
             }
             MAX7219_Shift2Bytes(MAX7219_MODE_INTENSITY, brightness);
-        } else {
-            PORTB &= ~_BV(PB2);
         }
 
-        if (ADXL345_triggered(interruptSource, ADXL345_ACTIVITY)) {
-            PORTA |= _BV(PA7);
-        } else {
-            PORTA &= ~_BV(PA7);
+        switch(currentMode) {
+            case 0: // water level no-tilt
+            case 1: // water level with-tilt
+                loopWaterLevel(currentMode, x, y, z); // pass mode as tilt boolean
+                break;
+            case 2: // Plus  Meter
+                loopPlusMeter(x, y, z);
+            default:
+                break;
         }
-        _delay_ms(10);
+
+        _delay_ms(75);
+
+        if ((PINA & _BV(PA3)) == 0) {
+            int8_t confidence;
+            // button debouncing
+            for (confidence = 12; confidence > 0 && ((PINA & _BV(PA3)) == 0); confidence--) {
+                _delay_ms(10);
+            }
+            if (confidence <= 0) {
+                if (currentMode >= 2) {
+                    currentMode = 0;
+                } else {
+                    currentMode++;
+                }
+            }
+            _delay_ms(100);
+        }
+
     }
 }
 
-#define LED_WIDTH (8)
-#define LED_WIDTH_HALF (4)
 
-void displayLine(int deg, const int middle_height) {
-    //deg is in anticlockwise
-    if (numb_between(80, deg, 100)) {
-        for (deg = 8; deg > 0; deg--) {
-            MAX7219_Shift2Bytes(deg, (middle_height < deg) * 0xFF);
-        }
-    } else if (numb_between(260, deg, 280)) {
-        for (deg = 8; deg > 0; deg--) {
-            MAX7219_Shift2Bytes(deg, (middle_height >= deg) * 0xFF);
-        }
-    } else {
-        const bool bool_180 = numb_between(90, deg, 270);
-        const double opp_over_adj = tan(deg * PI_OVER_180);
-        uint8_t col, fill;
-        int8_t adj, offset;
-        for (col = 0; col < LED_WIDTH; col++) {
-            //adj = (col < LED_WIDTH_HALF) ? (LED_WIDTH_HALF - col) : (LED_WIDTH_HALF - col);
-            adj = (LED_WIDTH_HALF - col);
-            offset = (int8_t) round(opp_over_adj * adj);
-
-            fill = _BV(middle_height - offset) - 1;
-            // If I want position of 5 (0001 1111),
-            // then I should use 1<<6 to get 0010 0000.
-            // Minus 1 from it to get my position filled.
-            MAX7219_Shift2Bytes(col+1, bool_180 ? ~fill : fill);
-        }
-    }
-    deg+=1;
-    _delay_ms(15);
-}
-
-//http://morf.lv/modules.php?name=tutorials&lasit=31
-void calculateAngle(double * angleAround, double * angleTilt, int16_t x, int16_t y, int16_t z) {
-    double angle_around = atan(x*1.0/y) * DEG180_OVER_PI;
-
-    if (numb_between(-5, y, 5) && numb_between(-5, x, 5)) { // lying flat on table, show X
-        angle_around = -1;
-    } else if (y == 0) { // skip, unknown if 0 deg or 180 deg || not connected
-        angle_around = -100;
-    } else if (y > 0) { // y (+)
-        angle_around += 90; // because upper ranger is +/- 90, so it will offset to 0~180
-    } else { // y (-)
-        angle_around += 270; // because upper ranger is +/- 90, so it will offset to 180~360
-    }
-
-    double angle_tilt;
-
-    if (numb_between(90,angle_around,180)) {
-        angle_tilt = atan( x * 1.0 / z ) * DEG180_OVER_PI;
-        if (x <= 0)
-            angle_tilt = -angle_tilt; // fix tilt when it is upside down
-    } else {
-        angle_tilt = atan( y * 1.0 / z ) * DEG180_OVER_PI;
-        if (y <= 0)
-            angle_tilt = -angle_tilt; // fix tilt when it is upside down
-    }
-
-    if (angle_tilt >= 0) {
-        angle_tilt = 90 - angle_tilt;
-    } else {
-        angle_tilt = -90 - angle_tilt;
-    }
-
-    *angleTilt = angle_tilt;
-    *angleAround = angle_around;
-}
 
 /*
 void displayRotatingLine(int deg) {
