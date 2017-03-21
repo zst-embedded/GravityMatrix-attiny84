@@ -92,7 +92,7 @@ void loopAtariBreakout() {
         enum BallDirection ball_dir = UP_STRAIGHT;
         int16_t x, y, z, paddle_shift;
 
-        showText(" 321");
+        showText(" READY?");
 
         bool didWin;
         while(true) {
@@ -389,9 +389,12 @@ int main(void) {
                 loopPlusMeter(x, y, z);
                 break;
             case 3:
-                loopParallelLine(x, y, z);
+                loopMovingDots(x, y, z);
                 break;
             case 4:
+                loopParallelLine(x, y, z);
+                break;
+            case 5:
                 loopAtariBreakout();
                 currentMode = 0;
                 break;
@@ -410,7 +413,7 @@ int main(void) {
                 _delay_ms(10);
             }*/
             if (confidence <= 0) {
-                if (currentMode >= 4) {
+                if (currentMode >= 5) {
                     currentMode = 0;
                 } else {
                     currentMode++;
