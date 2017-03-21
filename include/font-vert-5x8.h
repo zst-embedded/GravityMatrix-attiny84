@@ -1,9 +1,11 @@
 #pragma once
-//https://brainy-bits.com/blogs/tutorials/scroll-text-using-the-max7219-led-dot-matrix
+
+// https://brainy-bits.com/blogs/tutorials/scroll-text-using-the-max7219-led-dot-matrix
+
 #include <avr/pgmspace.h>
 #define CH_FONT_WIDTH (5)
+
 PROGMEM const unsigned char CH[] = {
-// offset away ' ' (decimal32) from each letter
         0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, // space
         0b01011111, 0b00000000, 0b00000000, 0b00000000, 0b00000000, // !
         0b00000011, 0b00000000, 0b00000011, 0b00000000, 0b00000000, // "
@@ -101,6 +103,7 @@ PROGMEM const unsigned char CH[] = {
         0b00001000, 0b00000100, 0b00001000, 0b00000100, 0b00000000, // ~
 };
 
+// offset away ' ' (decimal 32) from each letter
 inline uint8_t getFont(char character, uint8_t col) {
     if ('\0' == character || col >= CH_FONT_WIDTH || col < 0)
         return 0;

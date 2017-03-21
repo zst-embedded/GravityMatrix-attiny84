@@ -85,11 +85,6 @@ int main(void) {
     MAX7219_Shift2Bytes(MAX7219_MODE_POWER, 0x1);
     MAX7219_Shift2Bytes(MAX7219_MODE_DECODE, 0x0);
 
-    //_delay_ms(250);
-    //MAX7219_Shift2Bytes(MAX7219_MODE_TEST, 1);
-    //_delay_ms(250);
-    //MAX7219_Shift2Bytes(MAX7219_MODE_TEST, 0);
-
     // Setup ADXL345 3 axis accelerometer
     ADXL345_USI_SPI_Init();
     int16_t x, y, z;
@@ -150,33 +145,3 @@ int main(void) {
 
     }
 }
-
-
-
-/*
-void displayRotatingLine(int deg) {
-    while (deg <= 360) {
-        displayLine(deg, 4);
-    }
-}
-
-void displayMovingRow() {
-    int8_t i, j;
-
-    while (1) {
-        MAX7219_Shift2Bytes(j, 0);
-
-        for (i = 0; i < 8; i++) {
-            for (j = 1; j <= 0x8; j++) {
-                MAX7219_Shift2Bytes(j, _BV(i));
-            }
-            _delay_ms(30);
-        }
-        for (i = 7; i >= 0; i--) {
-            for (j = 1; j <= 0x8; j++) {
-                MAX7219_Shift2Bytes(j, _BV(i));
-            }
-            _delay_ms(30);
-        }
-    }
-}*/
